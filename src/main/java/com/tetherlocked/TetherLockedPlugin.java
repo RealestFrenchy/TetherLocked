@@ -3,6 +3,7 @@ package com.tetherlocked;
 import com.google.inject.Provides;
 import javax.inject.Inject;
 
+import com.tetherlocked.data.TetheredPlayerLocation;
 import net.runelite.client.plugins.party.messages.LocationUpdate;
 import com.tetherlocked.data.TetheredPlayer;
 import lombok.extern.slf4j.Slf4j;
@@ -16,11 +17,9 @@ import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import lombok.Getter;
-import net.runelite.client.party.*;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.PluginManager;
-import net.runelite.client.plugins.party.data.PartyData;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.party.PartyService;
@@ -40,19 +39,16 @@ public class TetherLockedPlugin extends Plugin
 {
 	@Inject
 	private Client client;
-
+	@Inject
+	private PartyService party;
 	@Inject
 	private ClientThread clientThread;
-
 	@Inject
 	private ClientToolbar clientToolbar;
-
 	@Inject
 	private TetherLockedConfig config;
-
 	@Inject
 	private PartyService partyService;
-
 	@Inject
 	private PluginManager pluginManager;
 	@Inject
@@ -63,6 +59,8 @@ public class TetherLockedPlugin extends Plugin
 	private NavigationButton navButton;
 	private boolean addedButton = false;
 	private Instant lastLogout;
+	protected double tetherLength;
+
 	@Override
 	protected void startUp() throws Exception
 	{
@@ -90,6 +88,7 @@ public class TetherLockedPlugin extends Plugin
 
 		lastLogout = Instant.now();
 		wsClient.registerMessage(LocationUpdate.class);
+		wsClient.registerMessage(TetheredPlayerLocation.class);
 	}
 
 	@Override
@@ -97,6 +96,7 @@ public class TetherLockedPlugin extends Plugin
 	{
 		clientToolbar.removeNavigation(navButton);
 		wsClient.unregisterMessage(LocationUpdate.class);
+		wsClient.unregisterMessage(TetheredPlayerLocation.class);
 		addedButton = false;
 		tetheredPlayers.clear();
 		lastLogout = null;
@@ -138,62 +138,65 @@ public class TetherLockedPlugin extends Plugin
 			myPlayer = new TetheredPlayer(partyService.getLocalMember(), client);
 			return;
 		}
-		if (myPlayer.getLocation() == null)
-		{
+		if (myPlayer.getLocation() == null) {
 			myPlayer.updatePlayerInfo(client);
 		}
-		double tetherDistance=calcDistance();
-		if (tetherDistance > config.getMaxTetherLength())
+		final TetheredPlayerLocation locationUpdate = new TetheredPlayerLocation(myPlayer.getLocation());
+		party.send(locationUpdate);
+		if (tetherLength > config.getMaxTetherLength())
 		{
 			tetherTooLong();
 		}
 	}
-
-	public double calcDistance()
+	@Subscribe
+	public void onTetheredPlayerLocation(TetheredPlayerLocation event)
 	{
+		long memberId = event.getMemberId();
+		WorldPoint point = event.getPoint();
+		updateTetherLength(point);
+	}
+/*	@Subscribe
+	public void onLocationUpdate(final LocationUpdate event)
+	{
+		long memberId = event.getMemberId();
+		WorldPoint point = event.getWorldPoint();
+		updateTetherLength(point);
+	}*/
 
-		List<PartyMember> linkedPlayers = partyService.getMembers();
-		WorldPoint myLocation = myPlayer.getLocation();
-		double longestDistance = 0;
-		final PartyData partyData = getPartyData(event.getMemberId)
-		tetheredPlayers.get(partyService.getMembers());
-
-		for (int i = 0; i < linkedPlayers.size(); i++)
+	public void tetherTooLong()
+	{ //TODO: make it so you can't interact with objects if outside of tether range.
+		System.out.print("your out of tether range");
+	}
+	public double updateTetherLength(WorldPoint linkedLocation)
+	{
+		WorldPoint myLocation = client.getLocalPlayer().getWorldLocation();
+		if (myLocation.getPlane() != linkedLocation.getPlane())
 		{
-			long memberID = linkedPlayers.get(i).getMemberId();
-			final TetheredPlayer tetheredPlayer = tetheredPlayers.get(partyService.getMemberById(memberID));
-			WorldPoint linkedLocation = tetheredPlayer.getLocation();
-			if (myLocation.getPlane() != linkedLocation.getPlane())
+			tetherLength = 20000;
+		}
+		else
+		{
+			double currentTetherLength = 0;
+			double currentXDistance = myLocation.getX() - linkedLocation.getX();
+			double currentYDistance = myLocation.getY() - linkedLocation.getY();
+			if (abs(currentYDistance) > abs(currentXDistance))
 			{
-				longestDistance = 20000;
+				if (currentTetherLength < currentYDistance)
+				{
+					currentTetherLength = currentYDistance;
+				}
+
 			}
 			else
 			{
-				double currentXDistance = myLocation.getX() - linkedLocation.getX();
-				double currentYDistance = myLocation.getY() - linkedLocation.getY();
-				if (abs(currentYDistance) > abs(currentXDistance))
+				if (currentTetherLength < currentXDistance)
 				{
-					if (longestDistance < currentYDistance)
-					{
-						longestDistance = currentYDistance;
-					}
-
-				}
-				else
-				{
-					if (longestDistance < currentXDistance)
-					{
-						longestDistance = currentXDistance;
-					}
+					currentTetherLength = currentXDistance;
 				}
 			}
-
+			tetherLength = currentTetherLength;
 		}
-		return longestDistance;
-	}
-	public void tetherTooLong()
-	{
-		System.out.print("your out of tether range");
+		return tetherLength;
 	}
 
 }
